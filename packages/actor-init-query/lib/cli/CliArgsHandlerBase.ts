@@ -7,6 +7,8 @@ import { ActionContext } from '@comunica/core';
 import { LoggerPretty } from '@comunica/logger-pretty';
 import type { IActionContext, ICliArgsHandler } from '@comunica/types';
 import type { Argv } from 'yargs';
+const path = require('node:path');
+
 
 /**
  * Basic CLI arguments handler that handles common options.
@@ -145,6 +147,45 @@ export class CliArgsHandlerBase implements ICliArgsHandler {
       .help(false);
   }
 
+  public static URIfy (source: string): string {
+    // In order to make running comunica on local files a more pleasant experience
+    // file system paths are supported as source arguments,
+    // being transformed into URIs under the hood.
+    // As requested in https://github.com/comunica/comunica/issues/1044
+
+    function isURI (str: string): boolean {
+      let URIRegex: RegExp = /^\w[\w\d\+\.\-]*:/;
+      // However, it also matches Windows drive syntax, such as C:
+
+      // In order to distinguish between a drive file path and a URI
+      // we could check with a drive file path regex:
+      let windowsDriveFilePathRegex: RegExp = /^\w:/;
+      let isWindowsDrivePath: boolean = str.match(windowsDriveFilePathRegex) !== null;
+
+      // Also comunica supports tagged URIs
+      let taggedURIRegExp: RegExp = /^\w+@\w[\w\d\+\.\-]*:/;
+      let isTaggedURI: boolean = str.match(taggedURIRegExp) !== null;
+
+      let isURI: boolean = isTaggedURI || !isWindowsDrivePath && str.match(URIRegex) !== null;
+      return isURI;
+    }
+
+    // Based on:
+    // https://github.com/comunica/comunica/blob/715b8acc122d28d09cbe28c02a1c7b8a7b82d024/packages/actor-dereference-file/test/ActorDereferenceFile-test.ts#L10
+    function fileUri(str: string): string {
+        let pathName = path.resolve(str).replace(/\\/ug, '/');
+
+        // Windows drive letter must be prefixed with a slash
+        if (!pathName.startsWith('/')) {
+            pathName = `/${pathName}`;
+        }
+
+        return encodeURI(`file://${pathName}`);
+    }
+
+    return isURI(source) ? source : fileUri(source);
+  }
+
   public async handleArgs(args: Record<string, any>, context: Record<string, any>): Promise<void> {
     // Print version information
     if (args.version) {
@@ -185,7 +226,8 @@ export class CliArgsHandlerBase implements ICliArgsHandler {
     if (args.sources.length > 0) {
       context.sources = context.sources || [];
       args.sources.forEach((sourceValue: string) => {
-        const source = CliArgsHandlerBase.getSourceObjectFromString(sourceValue);
+        let sourceValueURI: string = CliArgsHandlerBase.URIfy(sourceValue);
+        const source = CliArgsHandlerBase.getSourceObjectFromString(sourceValueURI);
         context.sources.push(source);
       });
     }
