@@ -17,6 +17,7 @@ import * as stringifyStream from 'stream-to-string';
 import { CliArgsHandlerBase } from '../lib';
 import { ActorInitQuery } from '../lib/ActorInitQuery';
 import { QueryEngineBase } from '../lib/QueryEngineBase';
+const path = require('node:path');
 
 const DF = new DataFactory();
 
@@ -932,7 +933,7 @@ LIMIT 100
       describe('for a fixed query', () => {
         it('handles a single source', async() => {
           const stdout = await stringifyStream(<any> (await actorFixedQuery.run({
-            argv: [ 'SOURCE' ],
+            argv: [ 'file:///SOURCE' ],
             env: {},
             stdin: <Readable><any> new PassThrough(),
             context,
@@ -940,14 +941,14 @@ LIMIT 100
           expect(stdout).toContain(`{"a":"triple"}`);
           expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
             [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
-            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'SOURCE' }],
+            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'file:///SOURCE' }],
             [KeysCore.log.name]: expect.any(LoggerPretty),
           });
         });
 
         it('handles the query format option -i', async() => {
           const stdout = await stringifyStream(<any> (await actorFixedQuery.run({
-            argv: [ 'SOURCE', '-i', 'graphql' ],
+            argv: [ 'file:///SOURCE', '-i', 'graphql' ],
             env: {},
             stdin: <Readable><any> new PassThrough(),
             context,
@@ -955,7 +956,7 @@ LIMIT 100
           expect(stdout).toContain(`{"a":"triple"}`);
           expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
             [KeysInitQuery.queryFormat.name]: { language: 'graphql', version: '1.1' },
-            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'SOURCE' }],
+            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'file:///SOURCE' }],
             [KeysCore.log.name]: expect.any(LoggerPretty),
           });
         });
@@ -1029,10 +1030,193 @@ LIMIT 100
         });
       });
 
+      // This tests that file system sources are URIfied,
+      // leaving out testing of _how_ they are URIfied,
+      // since all the heavy work there is done via path.resolve,
+      // which is platform-dependent and can't be mocked.
+      // (as seen in ADD source)
+      let supportedPathings: Array<Array<string>> =
+        [["supports absolute Unix pathing",
+          "/home/test.jsonld"],
+         ["supports relative Unix pathing via ~",
+          "~/test.jsonld"],
+         ["supports relative Unix pathing via ./",
+          "./test.jsonld"],
+         ["supports relative Unix pathing with name right away",
+          "test.jsonld"],
+         ["supports relative Unix pathing via ../",
+          "../test.jsonld"],
+         // all Windows pathing variants are listed in this doc:
+         // https://docs.microsoft.com/en-us/dotnet/standard/io/file-path-formats#traditional-dos-paths
+         ["supports absolute Windows pathing",
+          "C:\\test.jsonld"],
+         ["supports absolute Windows pathing from the root of the current drive",
+          "\\test.jsonld"],
+         ["supports relative Windows pathing",
+          "dir\\test.jsonld"],
+         ["supports relative Windows pathing via ..\\",
+          "..\\test.jsonld"],
+         ["supports relative Windows pathing from the current directiory of the current drive",
+          "C:dir\\test.jsonld"],
+         ["supports relative Windows pathing from the current directiory of the current drive via ..\\",
+          "C:..\\test.jsonld"]];
+
+      test.each([["supports absolute Unix pathing",
+          "/home/test.jsonld"],
+         ["supports relative Unix pathing via ~",
+          "~/test.jsonld"],
+         ["supports relative Unix pathing via ./",
+          "./test.jsonld"],
+         ["supports relative Unix pathing with name right away",
+          "test.jsonld"],
+         ["supports relative Unix pathing via ../",
+          "../test.jsonld"],
+         // all Windows pathing variants are listed in this doc:
+         // https://docs.microsoft.com/en-us/dotnet/standard/io/file-path-formats#traditional-dos-paths
+         ["supports absolute Windows pathing",
+          "C:\\test.jsonld"],
+         ["supports absolute Windows pathing from the root of the current drive",
+          "\\test.jsonld"],
+         ["supports relative Windows pathing",
+          "dir\\test.jsonld"],
+         ["supports relative Windows pathing via ..\\",
+          "..\\test.jsonld"],
+         ["supports relative Windows pathing from the current directiory of the current drive",
+          "C:dir\\test.jsonld"],
+         ["supports relative Windows pathing from the current directiory of the current drive via ..\\",
+          "C:..\\test.jsonld"]], 'for a file source', (description: string, path: string) => {
+            it(description, async() => {
+              const stdout = await stringifyStream(<any> (await actor.run({
+                argv: [path , '-q', queryString],
+                env: {},
+                stdin: new PassThrough(),
+                context,
+              })).stdout);
+
+              expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
+                [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
+                [KeysRdfResolveQuadPattern.sources.name]: [{ value: expect.stringMatching(/^file:\/\//)}],
+                [KeysCore.log.name]: expect.any(LoggerPretty),
+              });
+            });
+          })
+
+        // describe('EXCLUSIVELY', () => {
+        // it('in parsed mode', async() => {
+        //   const stdout = await stringifyStream(<any> (await actor.run({
+        //     argv: [ 'file:///SOURCE', '-q', queryString, '--explain', 'parsed' ],
+        //     env: {},
+        //     stdin: new PassThrough(),
+        //     context,
+        //   })).stdout);
+
+        //   expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
+        //     [KeysInitQuery.explain.name]: 'parsed',
+        //     [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
+        //     [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'file:///SOURCE' }],
+        //     [KeysCore.log.name]: expect.any(LoggerPretty),
+        //   });
+        // });
+
+        // [["An absolute file path from the root of drive C:."
+        //       "C:\Documents\Newsletters\Summer2018.pdf"
+        //       "file:///C:/Documents/Newsletters/Summer2018.pdf"]
+        //      // TODO
+        //      // ["An absolute path from the root of the current drive."
+        //      //  "\Program Files\Custom Utilities\StringFinder.exe"
+        //      //  ]
+        //      ["A relative path to a file in a subdirectory of the current directory."
+        //       "2018\January.xlsx"
+        //       ""]
+        //      ["..\Publications\TravelBrochure.pdf"
+        //       "A relative path to a file in a directory starting from the current directory."]
+        //      ["C:\Projects\apilibrary\apilibrary.sln"
+        //       "An absolute path to a file from the root of drive C:."]
+        //      ["C:Projects\apilibrary\apilibrary.sln"
+        //       "A relative path from the current directory of the C: drive."]]
+
+        // for a source that is a file on local file system
+        // describe('EXCLUSIVELY', () => {
+        //     // Only tests POSIX paths, since implementation relies on path.resolve() and it behaves in a stateful (platform-dependent) way,
+        //     // mocking which is more hussle than gains, as discussed in comments of https://stackoverflow.com/a/55909055
+        //     let testCases: Array<Array<string>> = [["supports absolute pathing",
+        //                                             "/home/comunica/comunica/engines/query-sparql-file/test.jsonld",
+        //                                             "file:///home/comunica/comunica/engines/query-sparql-file/test.jsonld"],
+        //                                            ["supports relative pathing via ./",
+        //                                             "./test.jsonld",
+        //                                             "file://" + process.cwd() + "/test.jsonld"],
+        //                                            ["supports relative pathing with name right away",
+        //                                             "test.jsonld",
+        //                                             "file://" + process.cwd() + "/test.jsonld"],
+        //                                            ["supports relative pathing via ../",
+        //                                             "../test.jsonld",
+        //                                             "file://" + process.cwd() + "/../test.jsonld"]];
+
+        //     it("supports absolute pathing", async() => {
+        //   const stdout = await stringifyStream(<any> (await actor.run({
+        //       argv: ["/home/comunica/comunica/engines/query-sparql-file/test.jsonld" , '-q', queryString],
+        //     env: {},
+        //     stdin: new PassThrough(),
+        //     context,
+        //   })).stdout);
+
+        //     expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
+        //         [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
+        //         [KeysRdfResolveQuadPattern.sources.name]: [{ value: "file:///home/comunica/comunica/engines/query-sparql-file/test.jsonld"}],
+        //         [KeysCore.log.name]: expect.any(LoggerPretty),
+        //     });
+        //     });
+
+        //     it("supports relative pathing via ./", async() => {
+        //   const stdout = await stringifyStream(<any> (await actor.run({
+        //       argv: ["./test.jsonld" , '-q', queryString],
+        //     env: {},
+        //     stdin: new PassThrough(),
+        //     context,
+        //   })).stdout);
+
+        //     expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
+        //         [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
+        //         [KeysRdfResolveQuadPattern.sources.name]: [{ value:  "file://" + process.cwd() + "/test.jsonld"}],
+        //         [KeysCore.log.name]: expect.any(LoggerPretty),
+        //     });
+        //     });
+
+        //     it("supports relative pathing with name right away", async() => {
+        //   const stdout = await stringifyStream(<any> (await actor.run({
+        //       argv: ["test.jsonld" , '-q', queryString],
+        //     env: {},
+        //     stdin: new PassThrough(),
+        //     context,
+        //   })).stdout);
+
+        //     expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
+        //         [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
+        //         [KeysRdfResolveQuadPattern.sources.name]: [{ value:  "file://" + process.cwd() + "/test.jsonld"}],
+        //         [KeysCore.log.name]: expect.any(LoggerPretty),
+        //     });
+        //     });
+
+        //     it("supports relative pathing via ../", async() => {
+        //   const stdout = await stringifyStream(<any> (await actor.run({
+        //       argv: ["../test.jsonld" , '-q', queryString],
+        //     env: {},
+        //     stdin: new PassThrough(),
+        //     context,
+        //   })).stdout);
+
+        //     expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
+        //         [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
+        //         [KeysRdfResolveQuadPattern.sources.name]: [{ value:  "file://" + process.cwd() + "/../test.jsonld"}],
+        //         [KeysCore.log.name]: expect.any(LoggerPretty),
+        //     });
+        //     });
+        // });
+
       describe('explain', () => {
         it('in parsed mode', async() => {
           const stdout = await stringifyStream(<any> (await actor.run({
-            argv: [ 'SOURCE', '-q', queryString, '--explain', 'parsed' ],
+            argv: [ 'file:///SOURCE', '-q', queryString, '--explain', 'parsed' ],
             env: {},
             stdin: <Readable><any> new PassThrough(),
             context,
@@ -1083,14 +1267,14 @@ LIMIT 100
           expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
             [KeysInitQuery.explain.name]: 'parsed',
             [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
-            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'SOURCE' }],
+            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'file:///SOURCE' }],
             [KeysCore.log.name]: expect.any(LoggerPretty),
           });
         });
 
         it('in logical mode', async() => {
           const stdout = await stringifyStream(<any> (await actor.run({
-            argv: [ 'SOURCE', '-q', queryString, '--explain', 'logical' ],
+            argv: [ 'file:///SOURCE', '-q', queryString, '--explain', 'logical' ],
             env: {},
             stdin: <Readable><any> new PassThrough(),
             context,
@@ -1141,7 +1325,7 @@ LIMIT 100
           expect(spyQueryOrExplain).toHaveBeenCalledWith(queryString, {
             [KeysInitQuery.explain.name]: 'logical',
             [KeysInitQuery.queryFormat.name]: { language: 'sparql', version: '1.1' },
-            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'SOURCE' }],
+            [KeysRdfResolveQuadPattern.sources.name]: [{ value: 'file:///SOURCE' }],
             [KeysCore.log.name]: expect.any(LoggerPretty),
           });
         });
@@ -1149,7 +1333,7 @@ LIMIT 100
         describe('in physical mode', () => {
           it('for a bindings response', async() => {
             const stdout = await stringifyStream(<any> (await actor.run({
-              argv: [ 'SOURCE', '-q', queryString, '--explain', 'physical' ],
+              argv: [ 'file:///SOURCE', '-q', queryString, '--explain', 'physical' ],
               env: {},
               stdin: <Readable><any> new PassThrough(),
               context,
@@ -1180,7 +1364,7 @@ LIMIT 100
             });
 
             const stdout = await stringifyStream(<any> (await actor.run({
-              argv: [ 'SOURCE', '-q', queryString, '--explain', 'physical' ],
+              argv: [ 'file:///SOURCE', '-q', queryString, '--explain', 'physical' ],
               env: {},
               stdin: <Readable><any> new PassThrough(),
               context,
@@ -1211,7 +1395,7 @@ LIMIT 100
             });
 
             const stdout = await stringifyStream(<any> (await actor.run({
-              argv: [ 'SOURCE', '-q', queryString, '--explain', 'physical' ],
+              argv: [ 'file:///SOURCE', '-q', queryString, '--explain', 'physical' ],
               env: {},
               stdin: <Readable><any> new PassThrough(),
               context,
@@ -1242,7 +1426,7 @@ LIMIT 100
             });
 
             const stdout = await stringifyStream(<any> (await actor.run({
-              argv: [ 'SOURCE', '-q', queryString, '--explain', 'physical' ],
+              argv: [ 'file:///SOURCE', '-q', queryString, '--explain', 'physical' ],
               env: {},
               stdin: <Readable><any> new PassThrough(),
               context,
